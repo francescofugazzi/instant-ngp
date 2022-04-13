@@ -37,7 +37,7 @@ to here `C:\Program Files (x86)\Microsoft Visual Studio\2019\Community\MSBuild\M
 
 Begin by cloning this repository and all its submodules using the following command (if you don't have git, download [here](https://git-scm.com/download/win) and add to path):
 ```sh
-$ git clone --recursive https://github.com/nvlabs/instant-ngp
+$ git clone --recursive https://github.com/francescofugazzi/instant-ngp
 $ cd instant-ngp
 ```
 if your python is not 3.9 (check with command `python --version`) then you need to run the following command to get it to ver 3.9.*
