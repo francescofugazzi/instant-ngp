@@ -811,10 +811,10 @@ __global__ void composite_kernel_nerf(
 				rgb.y() = rng.next_float();
 				rgb.z() = rng.next_float();
 			} else {
-				rgb = pos.array();
-				rgb.x() -= floorf(rgb.x());
-				rgb.y() -= floorf(rgb.y());
-				rgb.z() -= floorf(rgb.z());
+				rgb = (pos.array() - Array3f::Constant(0.5f)) / 2.0f + Array3f::Constant(0.5f);
+				// rgb.x() -= floorf(rgb.x());
+				// rgb.y() -= floorf(rgb.y());
+				// rgb.z() -= floorf(rgb.z());
 			}
 		} else if (render_mode == ERenderMode::EncodingVis) {
 			rgb = warped_pos.array();
@@ -983,7 +983,6 @@ __global__ void generate_training_samples_nerf(
 	const float* __restrict__ cdf_y,
 	const float* __restrict__ cdf_img,
 	const Vector2i cdf_res,
-	float near_distance,
 	const __half* __restrict__ training_images
 ) {
 	const uint32_t i = threadIdx.x + blockIdx.x * blockDim.x;
@@ -1060,7 +1059,7 @@ __global__ void generate_training_samples_nerf(
 	float cone_angle = calc_cone_angle(ray.d.dot(xform.col(2)), focal_length, cone_angle_constant);
 
 	// The near distance prevents learning of camera-specific fudge right in front of the camera
-	tminmax.x() = fmaxf(tminmax.x(), near_distance);
+	tminmax.x() = fmaxf(tminmax.x(), 0.0f);
 
 	float startt = tminmax.x();
 	startt += calc_dt(startt, cone_angle) * random_val(rng);
@@ -1230,7 +1229,8 @@ __global__ void compute_loss_kernel_train_nerf(
 	float* __restrict__ density_grid,
 	const float* __restrict__ mean_density_ptr,
 	const Eigen::Array3f* __restrict__ exposure,
-	Eigen::Array3f* __restrict__ exposure_gradient
+	Eigen::Array3f* __restrict__ exposure_gradient,
+	const float near_distance
 ) {
 	const uint32_t i = threadIdx.x + blockIdx.x * blockDim.x;
 	if (i >= *rays_counter) { return; }
@@ -1394,6 +1394,7 @@ __global__ void compute_loss_kernel_train_nerf(
 	// now do it again computing gradients
 	Array3f rgb_ray2 = { 0.f,0.f,0.f };
 	T = 1.f;
+	Vector3f origin = rays_in[i].o;
 	for (uint32_t j = 0; j < compacted_numsteps; ++j) {
 		if (max_level_rand_training) {
 			max_level_compacted_ptr[j] = max_level;
@@ -1430,7 +1431,11 @@ __global__ void compute_loss_kernel_train_nerf(
 		//static constexpr float mask_supervision_strength = 1.f; // we are already 'leaking' mask information into the nerf via the random bg colors; setting this to eg between 1 and  100 encourages density towards 0 in such regions.
 		//dloss_by_dmlp += (texsamp.w()<0.001f) ? mask_supervision_strength * weight : 0.f ;
 
-		local_dL_doutput[3] = loss_scale * dloss_by_dmlp + (float(local_network_output[3]) < 0 ? -output_l1_reg_density : 0.0f);
+		local_dL_doutput[3] =
+			loss_scale * dloss_by_dmlp +
+			(float(local_network_output[3]) < 0.0f ? -output_l1_reg_density : 0.0f) +
+			(float(local_network_output[3]) > -10.0f && (unwarp_position(coord_in->pos.p, aabb) - origin).norm() < near_distance ? 1e-4f : 0.0f);
+			;
 
 		*(tcnn::vector_t<tcnn::network_precision_t, 4>*)dloss_doutput = local_dL_doutput;
 
@@ -2282,6 +2287,7 @@ void Testbed::load_nerf() {
 	m_nerf.training.cam_pos_gradient.resize(m_nerf.training.dataset.n_images, Vector3f::Zero());
 	m_nerf.training.cam_pos_gradient_gpu.resize_and_copy_from_host(m_nerf.training.cam_pos_gradient);
 
+	m_nerf.training.cam_exposure.resize(m_nerf.training.dataset.n_images, AdamOptimizer<Array3f>(1e-3f));
 	m_nerf.training.cam_pos_offset.resize(m_nerf.training.dataset.n_images, AdamOptimizer<Vector3f>(1e-4f));
 	m_nerf.training.cam_rot_offset.resize(m_nerf.training.dataset.n_images, RotationAdamOptimizer(1e-4f));
 	m_nerf.training.cam_focal_length_offset = AdamOptimizer<Vector2f>(1e-5f);
