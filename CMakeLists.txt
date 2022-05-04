@@ -78,18 +78,55 @@ list(APPEND CUDA_NVCC_FLAGS "--extended-lambda")
 list(APPEND CUDA_NVCC_FLAGS "--expt-relaxed-constexpr")
 
 ###############################################################################
-# Dependencies (ordered alphabetically)
+# Dependencies
 ###############################################################################
 
-include_directories("dependencies")
-
-#########
-# Eigen #
-#########
-include_directories("dependencies/eigen")
-include_directories("dependencies/filesystem")
+################
+# tiny-cuda-nn #
+################
+set(TCNN_BUILD_BENCHMARK OFF)
+set(TCNN_BUILD_EXAMPLES OFF)
+add_subdirectory(dependencies/tiny-cuda-nn)
+include_directories("dependencies/tiny-cuda-nn/include")
+include_directories("dependencies/tiny-cuda-nn/dependencies")
 
 if (NGP_BUILD_WITH_GUI)
+	##########
+	# Vulkan #
+	##########
+	if (CUDA_VERSION VERSION_GREATER_EQUAL 11.0)
+		find_package(Vulkan)
+		if (Vulkan_FOUND)
+			list(APPEND NGP_DEFINITIONS -DNGP_VULKAN -DGLFW_INCLUDE_VULKAN)
+			include_directories("${Vulkan_INCLUDE_DIRS}")
+			set(GUI_LIBRARIES ${GUI_LIBRARIES} ${Vulkan_LIBRARIES})
+
+			set(GUI_SOURCES
+				${GUI_SOURCES}
+				src/dlss.cu
+			)
+
+			#############################################
+			# DLSS (depends on vulkan, so appears here) #
+			#############################################
+			include_directories("dependencies/dlss/include")
+			if (MSVC)
+				link_directories("${CMAKE_CURRENT_SOURCE_DIR}/dependencies/dlss/lib/Windows_x86_64/x86_64")
+				set(GUI_LIBRARIES ${GUI_LIBRARIES} nvsdk_ngx_d)
+			else()
+				link_directories("${CMAKE_CURRENT_SOURCE_DIR}/dependencies/dlss/lib/Linux_x86_64")
+				set(GUI_LIBRARIES ${GUI_LIBRARIES} nvsdk_ngx)
+			endif()
+		else()
+			message(WARNING
+				"Vulkan was not found. Neural graphics primitives will still compile "
+				"and run correctly, but DLSS will not be supported."
+			)
+		endif()
+	else()
+		message(WARNING "CUDA version too old for DLSS support. Requires CUDA 11.X")
+	endif()
+
 	########
 	# GLFW #
 	########
@@ -99,6 +136,7 @@ if (NGP_BUILD_WITH_GUI)
 	set(GLFW_BUILD_INSTALL OFF CACHE BOOL " " FORCE)
 	set(GLFW_INSTALL OFF CACHE BOOL " " FORCE)
 	set(GLFW_USE_CHDIR OFF CACHE BOOL " " FORCE)
+	set(GLFW_VULKAN_STATIC OFF CACHE BOOL " " FORCE)
 	set(BUILD_SHARED_LIBS ON CACHE BOOL " " FORCE)
 
 	add_subdirectory(dependencies/glfw)
@@ -121,16 +159,16 @@ if (NGP_BUILD_WITH_GUI)
 	if (MSVC)
 		include_directories("dependencies/gl3w")
 		link_directories("dependencies")
-		set(GL_SOURCES "dependencies/gl3w/GL/gl3w.c")
-		set(GL_LIBRARIES opengl32 $<TARGET_OBJECTS:glfw_objects>)
+		set(GUI_SOURCES ${GUI_SOURCES} "dependencies/gl3w/GL/gl3w.c")
+		set(GUI_LIBRARIES ${GUI_LIBRARIES} opengl32 $<TARGET_OBJECTS:glfw_objects>)
 	else()
 		find_package(GLEW REQUIRED)
 		include_directories(${GLEW_INCLUDE_DIRS})
-		set(GL_LIBRARIES GL ${GLEW_LIBRARIES} $<TARGET_OBJECTS:glfw_objects>)
+		set(GUI_LIBRARIES ${GUI_LIBRARIES} GL ${GLEW_LIBRARIES} $<TARGET_OBJECTS:glfw_objects>)
 	endif()
 
-	set(GL_SOURCES
-		${GL_SOURCES}
+	set(GUI_SOURCES
+		${GUI_SOURCES}
 		dependencies/imguizmo/ImGuizmo.cpp
 		dependencies/imgui/imgui.cpp
 		dependencies/imgui/backends/imgui_impl_glfw.cpp
@@ -142,6 +180,14 @@ if (NGP_BUILD_WITH_GUI)
 
 	list(APPEND NGP_DEFINITIONS -DNGP_GUI)
 endif(NGP_BUILD_WITH_GUI)
+
+include_directories("dependencies")
+
+#########
+# Eigen #
+#########
+include_directories("dependencies/eigen")
+include_directories("dependencies/filesystem")
 
 ###########
 # nanovdb #
@@ -182,15 +228,6 @@ if (Python_FOUND)
 	add_subdirectory("dependencies/pybind11")
 endif()
 
-################
-# tiny-cuda-nn #
-################
-set(TCNN_BUILD_BENCHMARK OFF)
-set(TCNN_BUILD_EXAMPLES OFF)
-add_subdirectory(dependencies/tiny-cuda-nn)
-include_directories("dependencies/tiny-cuda-nn/include")
-include_directories("dependencies/tiny-cuda-nn/dependencies")
-
 ##############
 # tinylogger #
 ##############
@@ -206,7 +243,7 @@ list(APPEND NGP_DEFINITIONS -DNGP_VERSION="${NGP_VERSION}")
 include_directories("include")
 
 set(SOURCES
-	${GL_SOURCES}
+	${GUI_SOURCES}
 	src/camera_path.cu
 	src/common_device.cu
 	src/marching_cubes.cu
@@ -275,7 +312,7 @@ endif()
 add_library(ngp STATIC ${SOURCES})
 set_target_properties(ngp PROPERTIES CUDA_RESOLVE_DEVICE_SYMBOLS ON)
 set_target_properties(ngp PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
-target_link_libraries(ngp PUBLIC ${GL_LIBRARIES} tiny-cuda-nn)
+target_link_libraries(ngp PUBLIC ${GUI_LIBRARIES} tiny-cuda-nn)
 target_compile_options(ngp PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:${CUDA_NVCC_FLAGS}>)
 target_compile_definitions(ngp PUBLIC ${NGP_DEFINITIONS} ${TCNN_DEFINITIONS})
 
@@ -283,6 +320,21 @@ add_executable(testbed src/main.cu)
 target_link_libraries(testbed PUBLIC ngp)
 target_compile_options(testbed PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:${CUDA_NVCC_FLAGS}>)
 target_compile_definitions(testbed PUBLIC ${NGP_DEFINITIONS} ${TCNN_DEFINITIONS})
+
+# Copy DLSS shared libraries
+if (Vulkan_FOUND)
+	if (MSVC)
+		add_custom_command(TARGET testbed POST_BUILD
+			COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_CURRENT_SOURCE_DIR}/dependencies/dlss/lib/Windows_x86_64/dev/nvngx_dlss.dll" $<TARGET_FILE_DIR:testbed>
+			COMMAND_EXPAND_LISTS
+		)
+	else()
+		add_custom_command(TARGET testbed POST_BUILD
+			COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_CURRENT_SOURCE_DIR}/dependencies/dlss/lib/Linux_x86_64/dev/libnvidia-ngx-dlss.so.2.4.0" $<TARGET_FILE_DIR:testbed>
+			COMMAND_EXPAND_LISTS
+		)
+	endif()
+endif()
 
 if (Python_FOUND)
 	add_library(pyngp SHARED src/python_api.cu)
