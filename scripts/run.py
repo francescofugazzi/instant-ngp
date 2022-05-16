@@ -56,6 +56,7 @@ def parse_args():
 
 	parser.add_argument("--sharpen", default=0, help="Set amount of sharpening applied to NeRF training images.")
 
+	parser.add_argument("--bgcolor", type=float, nargs="*", default=[0.0, 0.0, 0.0, 1.0], help="Set the background color in RGBA format. Example: --bgcolor 0.5 0.5 0.5 1.0")
 
 	args = parser.parse_args()
 	return args
@@ -134,6 +135,10 @@ if __name__ == "__main__":
 			sw = int(sw / 2)
 			sh = int(sh / 2)
 		testbed.init_window(sw, sh)
+
+	if args.bgcolor:
+		print("Setting background color")
+		testbed.background_color = (args.bgcolor)
 
 	testbed.shall_train = args.train if args.gui else True
 

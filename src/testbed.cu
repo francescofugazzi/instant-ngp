@@ -2421,6 +2421,15 @@ void Testbed::save_snapshot(const std::string& filepath_string, bool include_opt
 	m_network_config["snapshot"]["training_step"] = m_training_step;
 	m_network_config["snapshot"]["loss"] = m_loss_scalar;
 
+	// Save aabb crop values
+	m_network_config["snapshot"]["crop_aabb"] = m_render_aabb;
+
+	// Save dlss status and sharpening only if supported by the system
+	if (m_dlss = true)  {
+	m_network_config["snapshot"]["dlss"] = m_dlss;
+	m_network_config["snapshot"]["dlss_sharpening"] = m_dlss_sharpening;
+	}
+
 	if (m_testbed_mode == ETestbedMode::Nerf) {
 		m_network_config["snapshot"]["nerf"]["rgb"]["rays_per_batch"] = m_nerf.training.counters_rgb.rays_per_batch;
 		m_network_config["snapshot"]["nerf"]["rgb"]["measured_batch_size"] = m_nerf.training.counters_rgb.measured_batch_size;
@@ -2465,6 +2474,17 @@ void Testbed::load_snapshot(const std::string& filepath_string) {
 
 	m_training_step = m_network_config["snapshot"]["training_step"];
 	m_loss_scalar = m_network_config["snapshot"]["loss"];
+
+	// Load aabb crop values only if they were saved. It keeps retrocompability for loading previous saved snapshots
+	if (m_network_config["snapshot"].contains("crop_aabb")) {
+		m_render_aabb = m_network_config["snapshot"]["crop_aabb"];
+	}
+
+	// Load dlss valures only if they were saved and if the system support it. It keeps retrocompability for loading previous saved snapshots
+	if (m_dlss_supported = true && m_network_config["snapshot"].contains("dlss")) {
+		m_dlss = m_network_config["snapshot"]["dlss"];
+		m_dlss_sharpening = m_network_config["snapshot"]["dlss_sharpening"];
+	}
 
 	m_trainer->deserialize(m_network_config["snapshot"]);
 }
