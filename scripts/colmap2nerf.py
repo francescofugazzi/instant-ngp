@@ -37,6 +37,7 @@ def parse_args():
 	parser.add_argument("--skip_early", default=0, help="skip this many images from the start")
 	parser.add_argument("--keep_colmap_coords", action="store_true", help="keep transforms.json in COLMAP's original frame of reference (this will avoid reorienting and repositioning the scene for preview and rendering)")
 	parser.add_argument("--out", default="transforms.json", help="output path")
+	parser.add_argument("--vocab_path", default="", help="vocabulary tree path")
 	args = parser.parse_args()
 	return args
 
@@ -85,7 +86,10 @@ def run_colmap(args):
 	if os.path.exists(db):
 		os.remove(db)
 	do_system(f"colmap feature_extractor --ImageReader.camera_model {args.colmap_camera_model} --ImageReader.camera_params \"{args.colmap_camera_params}\" --SiftExtraction.estimate_affine_shape=true --SiftExtraction.domain_size_pooling=true --ImageReader.single_camera 1 --database_path {db} --image_path {images}")
-	do_system(f"colmap {args.colmap_matcher}_matcher --SiftMatching.guided_matching=true --database_path {db}")
+	match_cmd = f"colmap {args.colmap_matcher}_matcher --SiftMatching.guided_matching=true --database_path {db}"
+	if args.vocab_path:
+		match_cmd += f" --VocabTreeMatching.vocab_tree_path {args.vocab_path}"
+	do_system(match_cmd)
 	try:
 		shutil.rmtree(sparse)
 	except:
@@ -130,6 +134,9 @@ def rotmat(a, b):
 	a, b = a / np.linalg.norm(a), b / np.linalg.norm(b)
 	v = np.cross(a, b)
 	c = np.dot(a, b)
+	# handle exception for the opposite direction input
+	if c < -1 + 1e-10:
+		return rotmat(a + np.random.uniform(-1e-2, 1e-2, 3), b)
 	s = np.linalg.norm(v)
 	kmat = np.array([[0, -v[2], v[1]], [v[2], 0, -v[0]], [-v[1], v[0], 0]])
 	return np.eye(3) + kmat + kmat.dot(kmat) * ((1 - c) / (s ** 2 + 1e-10))

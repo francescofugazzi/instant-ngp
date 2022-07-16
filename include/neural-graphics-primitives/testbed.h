@@ -288,9 +288,10 @@ public:
 	}
 	bool reprojection_available() { return m_dlss; }
 	static ELossType string_to_loss_type(const std::string& str);
-	void reset_network();
+	void reset_network(bool clear_density_grid = true);
 	void create_empty_nerf_dataset(size_t n_images, int aabb_scale = 1, bool is_hdr = false);
 	void load_nerf();
+	void load_nerf_post();
 	void load_mesh();
 	void set_exposure(float exposure) { m_exposure = exposure; }
 	void set_max_level(float maxlevel);
@@ -311,6 +312,10 @@ public:
 	Eigen::Vector3f view_up() const { return m_camera.col(1); }
 	Eigen::Vector3f view_side() const { return m_camera.col(0); }
 	void set_view_dir(const Eigen::Vector3f& dir);
+	void first_training_view();
+	void last_training_view();
+	void previous_training_view();
+	void next_training_view();
 	void set_camera_to_training_view(int trainview);
 	void reset_camera();
 	bool keyboard_event();
@@ -357,7 +362,7 @@ public:
 	void draw_visualizations(ImDrawList* list, const Eigen::Matrix<float, 3, 4>& camera_matrix);
 	void train_and_render(bool skip_rendering);
 	filesystem::path training_data_path() const;
-	void init_window(int resw, int resh, bool hidden = false);
+	void init_window(int resw, int resh, bool hidden = false, bool second_window = false);
 	void destroy_window();
 	void apply_camera_smoothing(float elapsed_ms);
 	int find_best_training_view(int default_view);
@@ -468,10 +473,18 @@ public:
 	EMeshRenderMode m_mesh_render_mode = EMeshRenderMode::VertexNormals;
 
 	uint32_t m_seed = 1337;
-
 #ifdef NGP_GUI
-
 	GLFWwindow* m_glfw_window = nullptr;
+	struct SecondWindow {
+		GLFWwindow* window = nullptr;
+		GLuint program = 0;
+		GLuint vao = 0, vbo = 0;
+		void draw(GLuint texture);
+	} m_second_window;
+
+	void create_second_window();
+
+	std::function<bool()> m_keyboard_event_callback;
 
 	std::shared_ptr<GLTexture> m_pip_render_texture;
 	std::vector<std::shared_ptr<GLTexture>> m_render_textures;
@@ -560,6 +573,7 @@ public:
 			bool random_bg_color = true;
 			bool linear_colors = false;
 			ELossType loss_type = ELossType::L2;
+			ELossType depth_loss_type = ELossType::L1;
 			bool snap_to_pixel_centers = true;
 			bool train_envmap = false;
 
@@ -631,8 +645,8 @@ public:
 
 		float rendering_min_transmittance = 0.01f;
 
-		float m_glow_y_cutoff = 0.f;
-		int m_glow_mode = 0;
+		float glow_y_cutoff = 0.f;
+		int glow_mode = 0;
 	} m_nerf;
 
 	struct Sdf {
@@ -647,7 +661,6 @@ public:
 		BRDFParams brdf;
 
 		FiniteDifferenceNormalsApproximator fd_normals;
-
 
 		// Mesh data
 		EMeshSdfMode mesh_sdf_mode = EMeshSdfMode::Raystab;
